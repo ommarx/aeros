@@ -1,0 +1,1044 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AEROS | Catch control errors early</title>
+<meta name="description" content="AEROS flags a broken control the moment the record arrives, measures how long errors run before detection, and suggests where to look first.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect x='1' y='1' width='38' height='38' rx='11' fill='%231E2511'/%3E%3Crect x='8' y='12' width='24' height='7' rx='2' fill='%23A32638'/%3E%3Crect x='8' y='23' width='6' height='7' rx='2' fill='%2393A64D'/%3E%3Cpath d='M23 8v24' stroke='%23E8EAD8' stroke-width='1.5' stroke-dasharray='2.5 2.5'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1;1,9..144,300..900,0..100,0..1&family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #E8EAD8;
+    --paper-deep: #DCDFC6;
+    --card: #F4F5E9;
+    --ink: #232A12;
+    --olive: #4F5E22;
+    --olive-light: #93A64D;
+    --olive-deep: #333D1C;
+    --olive-night: #1E2511;
+    --olive-black: #141A0A;
+    --wine: #6E1423;
+    --wine-mid: #8E1B30;
+    --claret: #A32638;
+    --wine-deep: #4A0E19;
+    --wine-night: #2C0810;
+    --brass: #D4AE57;
+    --muted: #5C6542;
+    --rule: #BCC09F;
+    --on-dark: #E8EAD8;
+    --on-dark-mute: rgba(232,234,216,0.74);
+    --line-dark: rgba(232,234,216,0.2);
+    --serif: "Fraunces", "Iowan Old Style", Georgia, serif;
+    --sans: "Geist", "Helvetica Neue", Arial, sans-serif;
+    --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --pad: clamp(1.25rem, 5vw, 4rem);
+    --r: 20px;
+    --ease: cubic-bezier(0.7, 0, 0.2, 1);
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; scroll-padding-top: 5rem; }
+  body { margin: 0; font-family: var(--sans); font-size: 1.0625rem; line-height: 1.62; color: var(--ink); background: var(--paper); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  /* paper grain over everything */
+  body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 200; opacity: 0.4; mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.3 0 0 0 0 0.34 0 0 0 0 0.18 0 0 0 0.13 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  a { color: inherit; }
+  :focus-visible { outline: 3px solid var(--brass); outline-offset: 3px; }
+  .wrap { position: relative; z-index: 2; max-width: 78rem; margin: 0 auto; padding: 0 var(--pad); }
+  h1, h2, h3 { font-family: var(--serif); font-optical-sizing: auto; font-variation-settings: "SOFT" 100, "WONK" 1; font-weight: 600; letter-spacing: -0.028em; line-height: 1.04; margin: 0; }
+  section { position: relative; overflow: hidden; padding: clamp(3.75rem, 8vw, 7rem) 0; }
+  .dark { color: var(--on-dark); }
+  .dark p { color: var(--on-dark-mute); }
+
+  /* ---------- Icons ---------- */
+  .i { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+  /* ---------- Section tag + headings ---------- */
+  .tag { display: inline-flex; align-items: center; gap: 0.7rem; font-weight: 500; font-size: 0.95rem; margin-bottom: 1.1rem; }
+  .badge { display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; background: rgba(110,20,35,0.1); color: var(--wine); box-shadow: inset 0 0 0 1px rgba(110,20,35,0.25); }
+  .dark .badge { background: rgba(212,174,87,0.14); color: var(--brass); box-shadow: inset 0 0 0 1px rgba(212,174,87,0.35); }
+  .sec-title { font-size: clamp(2.2rem, 4.8vw, 3.9rem); max-width: 17ch; }
+  .sec-title.wide { max-width: 24ch; }
+  .sec-intro { max-width: 52ch; color: var(--muted); font-size: 1.1rem; margin: 1.1rem 0 0; }
+  .sec-head { margin-bottom: clamp(2rem, 4vw, 3.5rem); }
+
+  /* ---------- Buttons (the fill grows out of the arrow) ---------- */
+  .btn {
+    --bg: var(--wine); --fg: var(--on-dark); --fill: var(--on-dark); --fg-h: var(--wine);
+    --cb: var(--on-dark); --cf: var(--wine); --cb-h: var(--wine); --cf-h: var(--on-dark);
+    position: relative; isolation: isolate; overflow: hidden;
+    display: inline-flex; align-items: center; gap: 1rem;
+    font: inherit; font-weight: 550; font-size: 1rem; letter-spacing: -0.005em; cursor: pointer; text-decoration: none;
+    border: 0; border-radius: 999px; padding: 0.4rem 0.4rem 0.4rem 1.6rem; min-height: 3.1rem;
+    background: var(--bg); color: var(--fg);
+    box-shadow: 0 10px 24px -14px rgba(74,14,25,0.8);
+    transition: color 0.4s var(--ease) 0.05s, transform 0.25s ease;
+  }
+  .btn::before { content: ""; position: absolute; z-index: -1; right: 0.4rem; top: 50%; width: 2.3rem; height: 2.3rem; border-radius: 50%; background: var(--fill); transform: translateY(-50%) scale(1); transition: transform 0.6s var(--ease); }
+  .btn:not([disabled]):hover { color: var(--fg-h); transform: translateY(-1px); }
+  .btn:not([disabled]):hover::before { transform: translateY(-50%) scale(17); }
+  .btn:not([disabled]):active { transform: translateY(1px) scale(0.99); }
+  .btn[disabled] { opacity: 0.6; cursor: progress; }
+  .chev { position: relative; display: grid; place-items: center; width: 2.3rem; height: 2.3rem; border-radius: 50%; overflow: hidden; background: var(--cb); color: var(--cf); flex: none; transition: background 0.4s var(--ease) 0.05s, color 0.4s var(--ease) 0.05s; }
+  .chev svg { position: absolute; width: 1.1rem; height: 1.1rem; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.5s var(--ease); }
+  .chev svg + svg { transform: translateX(-170%); }
+  .btn:not([disabled]):hover .chev { background: var(--cb-h); color: var(--cf-h); }
+  .btn:not([disabled]):hover .chev svg:first-child { transform: translateX(170%); }
+  .btn:not([disabled]):hover .chev svg + svg { transform: translateX(0); }
+  .btn.light { --bg: var(--on-dark); --fg: var(--olive-night); --fill: var(--wine); --fg-h: var(--on-dark); --cb: var(--wine); --cf: var(--on-dark); --cb-h: var(--on-dark); --cf-h: var(--wine); box-shadow: 0 12px 28px -16px rgba(0,0,0,0.8); }
+  .btn.outline { --bg: transparent; --fg: var(--on-dark); --fill: var(--on-dark); --fg-h: var(--olive-night); --cb: var(--on-dark); --cf: var(--olive-night); --cb-h: var(--olive-night); --cf-h: var(--on-dark); box-shadow: inset 0 0 0 1.5px rgba(232,234,216,0.6); }
+  .btn.small { min-height: 2.6rem; font-size: 0.93rem; padding: 0.3rem 0.3rem 0.3rem 1.2rem; gap: 0.7rem; }
+  .btn.small::before { right: 0.3rem; width: 2rem; height: 2rem; }
+  .btn.small .chev { width: 2rem; height: 2rem; }
+  .btn.nochev { padding: 0.5rem 1.3rem; }
+  .btn.nochev::before { right: 50%; width: 2rem; height: 2rem; transform: translate(50%, -50%) scale(1); }
+  .btn.nochev:not([disabled]):hover::before { transform: translate(50%, -50%) scale(20); }
+
+  /* ---------- Nav ---------- */
+  .nav { position: sticky; top: 0; z-index: 90; background: rgba(20,26,10,0.88); backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2); color: var(--on-dark); padding-top: env(safe-area-inset-top, 0px); border-bottom: 1px solid var(--line-dark); }
+  .nav-in { display: flex; align-items: center; gap: 1.5rem; min-height: 4.4rem; }
+  .mark { font-family: var(--serif); font-variation-settings: "SOFT" 100, "WONK" 0; font-weight: 700; font-size: 1.6rem; letter-spacing: 0.1em; text-decoration: none; display: inline-flex; align-items: center; gap: 0.75rem; margin-right: auto; }
+  .mark svg { width: 2.4rem; height: 2.4rem; flex: none; transition: transform 0.6s var(--ease); }
+  .mark:hover svg { transform: rotate(-8deg) scale(1.06); }
+  .lg-late { transform-box: fill-box; transform-origin: left center; animation: lagGrow 6s var(--ease) infinite; }
+  @keyframes lagGrow { 0%, 8% { transform: scaleX(0.28); } 62%, 90% { transform: scaleX(1); } 100% { transform: scaleX(0.28); } }
+  .links { display: flex; align-items: center; gap: 1.9rem; font-size: 0.96rem; font-weight: 450; }
+  .links a { text-decoration: none; opacity: 0.86; position: relative; padding: 0.3rem 0; }
+  .links a::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--claret); transform: scaleX(0); transform-origin: left; transition: transform 0.4s var(--ease); }
+  .links a:hover { opacity: 1; }
+  .links a:hover::after { transform: scaleX(1); }
+  .status { display: inline-flex; align-items: center; gap: 0.5rem; font-family: var(--mono); font-size: 0.74rem; color: var(--on-dark-mute); white-space: nowrap; }
+  .status::before { content: ""; width: 0.6rem; height: 0.6rem; border-radius: 50%; background: rgba(232,234,216,0.4); }
+  .status.up::before { background: #9BCB6B; box-shadow: 0 0 0 3px rgba(155,203,107,0.25); }
+  .status.down::before { background: var(--claret); }
+  .menu-btn { display: none; align-items: center; gap: 0.5rem; font: inherit; font-weight: 500; background: transparent; color: var(--on-dark); border: 1.5px solid rgba(232,234,216,0.5); border-radius: 999px; padding: 0.45rem 1.05rem; cursor: pointer; }
+
+  /* ---------- Morphing blobs (CSS) ---------- */
+  .blob { position: absolute; pointer-events: none; z-index: 0; filter: blur(70px); will-change: border-radius, transform; border-radius: 42% 58% 62% 38% / 45% 38% 62% 55%; animation: morph 19s ease-in-out infinite alternate, drift 27s ease-in-out infinite alternate; }
+  @keyframes morph {
+    0%   { border-radius: 42% 58% 62% 38% / 45% 38% 62% 55%; }
+    33%  { border-radius: 63% 37% 41% 59% / 58% 63% 37% 42%; }
+    66%  { border-radius: 35% 65% 56% 44% / 38% 47% 53% 62%; }
+    100% { border-radius: 55% 45% 33% 67% / 62% 40% 60% 38%; }
+  }
+  @keyframes drift { 0% { transform: translate(0, 0) rotate(0deg) scale(1); } 100% { transform: translate(7%, -9%) rotate(55deg) scale(1.12); } }
+
+  /* ---------- Hero ---------- */
+  .hero { background: var(--olive-night); color: var(--on-dark); padding: clamp(3rem, 7vw, 5.5rem) 0 0; }
+  .hero > .grid-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none; background: radial-gradient(rgba(232,234,216,0.1) 1px, transparent 1.6px) 0 0 / 28px 28px; -webkit-mask-image: radial-gradient(70% 80% at 70% 40%, #000, transparent 85%); mask-image: radial-gradient(70% 80% at 70% 40%, #000, transparent 85%); }
+  .hero .b1 { width: 38rem; height: 38rem; right: -8rem; top: -12rem; background: var(--wine-mid); opacity: 0.55; }
+  .hero .b2 { width: 34rem; height: 34rem; left: -12rem; bottom: -10rem; background: var(--olive); opacity: 0.6; animation-delay: -6s; }
+  .hero .b3 { width: 20rem; height: 20rem; left: 38%; top: 8%; background: var(--brass); opacity: 0.16; animation-delay: -11s; }
+  .liquid { position: absolute; z-index: 1; right: -6%; top: 3%; width: min(54rem, 78vw); height: auto; pointer-events: none; }
+  .hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.02fr); gap: clamp(2rem, 5vw, 4.5rem); align-items: center; }
+  .hero h1 { font-size: clamp(3rem, 6.6vw, 5.7rem); font-weight: 650; line-height: 0.98; letter-spacing: -0.035em; }
+  .hero-lede { font-size: 1.16rem; max-width: 40ch; margin: 1.5rem 0 2.1rem; color: var(--on-dark-mute); }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 0.9rem; }
+  .hero-note { font-size: 0.9rem; color: var(--on-dark-mute); margin: 1.3rem 0 0; max-width: 42ch; }
+
+  /* Lag card (glass) */
+  .lagcard { margin: 0; background: linear-gradient(160deg, rgba(232,234,216,0.12), rgba(232,234,216,0.04)); border: 1px solid rgba(232,234,216,0.24); border-radius: 24px; padding: clamp(1.25rem, 3vw, 2rem); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 30px 60px -30px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.14); }
+  .lag-q { font-family: var(--serif); font-style: italic; font-weight: 400; font-size: 1.3rem; line-height: 1.3; margin: 0 0 1rem; max-width: 30ch; color: var(--on-dark); }
+  .lag-head { display: flex; align-items: flex-end; gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+  .lag-count { font-family: var(--serif); font-variation-settings: "SOFT" 100, "WONK" 0; font-weight: 700; letter-spacing: -0.045em; line-height: 0.8; font-size: clamp(4.2rem, 8.5vw, 7.5rem); color: var(--brass); font-variant-numeric: lining-nums; }
+  .lag-count span { display: inline-block; min-width: 1.1ch; }
+  .lag-count small { font-style: italic; font-weight: 400; font-size: 0.26em; letter-spacing: 0; margin-left: 0.2em; color: var(--on-dark); }
+  .lag-cap { margin: 0 0 0.3rem; font-size: 0.95rem; max-width: 22ch; line-height: 1.3; color: var(--on-dark-mute); }
+  .plot { position: relative; padding-top: 1.8rem; }
+  .lane { margin-bottom: 0.4rem; }
+  .lane-name { font-size: 0.9rem; font-weight: 550; }
+  .rail { position: relative; height: 1.9rem; margin: 0.3rem 0 0.15rem; background: rgba(232,234,216,0.09); border: 1px solid rgba(232,234,216,0.4); border-radius: 6px; }
+  .fill { position: absolute; top: -1px; bottom: -1px; left: 6.667%; width: 0; border-radius: 5px; }
+  .fill.late { background: repeating-linear-gradient(135deg, var(--claret) 0 7px, #7C1B2B 7px 10px); }
+  .fill.flag { background: var(--olive-light); width: 3.333%; }
+  .meta { position: relative; height: 1.4rem; font-size: 0.76rem; font-family: var(--mono); }
+  .meta span { position: absolute; top: 0; white-space: nowrap; }
+  .meta .start { left: 6.667%; }
+  .meta .end { left: 96.667%; transform: translateX(-100%); opacity: 0; transition: opacity 0.3s ease; }
+  .meta .end.show { opacity: 1; }
+  .limit { position: absolute; left: 53.333%; top: 0; bottom: 2.3rem; width: 0; border-left: 2px dashed rgba(232,234,216,0.75); pointer-events: none; }
+  .limit span { position: absolute; top: 0; left: 0; transform: translate(-50%, -100%); white-space: nowrap; font-size: 0.72rem; font-family: var(--mono); padding: 0.1rem 0.55rem; border-radius: 999px; background: var(--olive-night); border: 1px solid rgba(232,234,216,0.6); transition: background 0.2s ease, border-color 0.2s ease; }
+  .limit.passed span { background: var(--claret); border-color: var(--claret); }
+  .ruler { position: relative; height: 1.8rem; border-top: 1px solid rgba(232,234,216,0.55); margin-top: 0.3rem; }
+  .ruler i { position: absolute; top: 0; width: 1px; height: 0.4rem; background: rgba(232,234,216,0.6); }
+  .ruler i.major { height: 0.7rem; background: var(--on-dark); }
+  .ruler b { position: absolute; top: 0.95rem; transform: translateX(-50%); font-weight: 400; font-family: var(--mono); font-size: 0.68rem; color: var(--on-dark-mute); }
+
+  /* Logo chips strip */
+  .strip { position: relative; z-index: 2; margin-top: clamp(3rem, 6vw, 5rem); border-top: 1px solid var(--line-dark); padding: 1.7rem 0 clamp(4.5rem, 8vw, 6.5rem); }
+  .strip-title { margin: 0 0 1.2rem; font-size: 0.95rem; color: var(--on-dark-mute); }
+  .marquee { overflow: hidden; -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); }
+  .marquee-track { display: flex; width: max-content; gap: 0.9rem; animation: slide 46s linear infinite; }
+  .marquee:hover .marquee-track { animation-play-state: paused; }
+  .chip { display: inline-flex; align-items: center; gap: 0.75rem; padding: 0.5rem 1.3rem 0.5rem 0.5rem; border-radius: 999px; border: 1px solid var(--line-dark); background: rgba(232,234,216,0.05); font-weight: 550; white-space: nowrap; transition: background 0.3s ease, border-color 0.3s ease; }
+  .chip:hover { background: rgba(232,234,216,0.12); border-color: rgba(232,234,216,0.45); }
+  .chip em { font-style: normal; display: grid; place-items: center; width: 2.3rem; height: 2.3rem; border-radius: 50%; background: var(--wine-mid); color: var(--on-dark); transition: border-radius 0.5s var(--ease), transform 0.5s var(--ease); }
+  .chip:nth-child(3n+2) em { background: var(--olive); }
+  .chip:nth-child(3n) em { background: #8A6A1E; }
+  .chip:hover em { border-radius: 30%; transform: rotate(-8deg); }
+  @keyframes slide { to { transform: translateX(-50%); } }
+  .wave { position: absolute; z-index: 3; left: 0; bottom: -1px; width: 100%; height: clamp(46px, 6.5vw, 96px); display: block; }
+
+  /* ---------- What it does ---------- */
+  .what::before { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0; background: radial-gradient(40rem 26rem at 100% 0%, rgba(110,20,35,0.1), transparent 65%), radial-gradient(38rem 26rem at 0% 100%, rgba(79,94,34,0.14), transparent 65%); }
+  .quad { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; }
+  .feat { background: linear-gradient(165deg, #F8F9EE, var(--card)); border: 1px solid var(--rule); border-radius: var(--r); padding: clamp(1.5rem, 3vw, 2.25rem); display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: 1.4rem; align-items: start; box-shadow: 0 1px 0 #fff inset, 0 24px 40px -30px rgba(35,42,18,0.55); transition: transform 0.5s var(--ease), box-shadow 0.5s var(--ease); }
+  .feat:hover { transform: translateY(-4px); box-shadow: 0 1px 0 #fff inset, 0 34px 50px -30px rgba(35,42,18,0.65); }
+  .ic { width: 4.5rem; height: 4.5rem; border-radius: 22px; background: linear-gradient(145deg, var(--olive), var(--olive-deep)); color: var(--on-dark); display: grid; place-items: center; transition: border-radius 0.7s var(--ease), transform 0.7s var(--ease); }
+  .ic .i { width: 2.2rem; height: 2.2rem; stroke-width: 1.5; }
+  .feat:nth-child(2) .ic { background: linear-gradient(145deg, var(--wine-mid), var(--wine-deep)); }
+  .feat:nth-child(3) .ic { background: linear-gradient(145deg, #7B8C38, var(--olive)); }
+  .feat:nth-child(4) .ic { background: linear-gradient(145deg, var(--wine), var(--wine-night)); }
+  .feat:hover .ic { border-radius: 50%; transform: rotate(-10deg) scale(1.06); }
+  .feat h3 { font-size: 1.6rem; margin-bottom: 0.45rem; }
+  .feat p { margin: 0; color: var(--muted); }
+  .center-cta { margin-top: 2.5rem; }
+
+  /* ---------- Why (dark olive) ---------- */
+  .why { background: var(--olive-deep); }
+  .why .b1 { width: 30rem; height: 30rem; right: -8rem; bottom: -10rem; background: var(--wine-mid); opacity: 0.4; }
+  .why .b2 { width: 24rem; height: 24rem; left: -8rem; top: -8rem; background: var(--olive-light); opacity: 0.22; animation-delay: -9s; }
+  .why-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.2fr); gap: clamp(2rem, 6vw, 5rem); align-items: start; }
+  .why .sec-intro { color: var(--on-dark-mute); }
+  .points { display: grid; gap: 0; }
+  .point { padding: 1.5rem 0 1.5rem 0; border-top: 1px solid var(--line-dark); display: grid; grid-template-columns: 3rem minmax(0, 1fr); gap: 1.2rem; align-items: start; transition: padding-left 0.5s var(--ease); }
+  .point:last-child { border-bottom: 1px solid var(--line-dark); }
+  .point:hover { padding-left: 0.6rem; }
+  .point .badge { margin-top: 0.15rem; width: 2.7rem; height: 2.7rem; }
+  .point h3 { font-size: 1.55rem; margin-bottom: 0.4rem; color: var(--on-dark); }
+  .point p { margin: 0; max-width: 54ch; }
+
+  /* ---------- Built-in tiles ---------- */
+  .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+  .tile { background: linear-gradient(165deg, #F8F9EE, var(--card)); border: 1px solid var(--rule); border-radius: var(--r); padding: 1.5rem 1.5rem 1.6rem; box-shadow: 0 1px 0 #fff inset, 0 20px 34px -28px rgba(35,42,18,0.55); transition: transform 0.5s var(--ease); }
+  .tile:hover { transform: translateY(-4px); }
+  .dot { width: 2.9rem; height: 2.9rem; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(145deg, var(--olive), var(--olive-deep)); color: var(--on-dark); margin-bottom: 1.1rem; transition: border-radius 0.6s var(--ease), transform 0.6s var(--ease); }
+  .tile:nth-child(even) .dot { background: linear-gradient(145deg, var(--wine-mid), var(--wine-deep)); }
+  .tile:hover .dot { border-radius: 32%; transform: rotate(8deg); }
+  .tile h3 { font-size: 1.35rem; margin-bottom: 0.3rem; }
+  .tile p { margin: 0; color: var(--muted); font-size: 0.98rem; }
+
+  /* ---------- Demo ---------- */
+  .demo { background: var(--paper-deep); }
+  .demo::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(34rem 22rem at 0% 0%, rgba(79,94,34,0.16), transparent 65%), radial-gradient(34rem 22rem at 100% 100%, rgba(110,20,35,0.1), transparent 65%); }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 1.2rem 2rem; padding: 1.1rem 1.4rem; background: var(--card); border: 1px solid var(--rule); border-radius: var(--r); box-shadow: 0 1px 0 #fff inset; }
+  .slider { display: flex; align-items: center; gap: 0.9rem; font-weight: 500; }
+  .slider input { width: min(14rem, 46vw); accent-color: var(--wine); height: 2rem; }
+  .slider output { font-family: var(--mono); font-weight: 500; min-width: 4.5ch; }
+  .summary { margin: 0; margin-left: auto; font-family: var(--serif); font-style: italic; font-weight: 500; font-size: 1.1rem; min-height: 1.6em; }
+  .ledger { position: relative; z-index: 2; margin-top: 1rem; background: var(--card); border: 1px solid var(--rule); border-radius: var(--r); overflow: hidden; box-shadow: 0 1px 0 #fff inset, 0 30px 50px -36px rgba(35,42,18,0.6); }
+  .empty { padding: 2.5rem 1.5rem; color: var(--muted); max-width: 56ch; }
+  .empty strong { color: var(--ink); font-family: var(--serif); font-weight: 600; font-size: 1.35rem; display: block; margin-bottom: 0.2rem; }
+  .error { padding: 1.25rem 1.5rem; border-left: 5px solid var(--wine); background: #EBD3D3; }
+
+  details.row { border-bottom: 1px solid var(--rule); }
+  details.row:last-child { border-bottom: 0; }
+  details.row summary { list-style: none; cursor: pointer; padding: 1rem 1.25rem; display: grid; align-items: center; gap: 0.5rem 1.25rem; grid-template-columns: 4.2rem minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.7fr) minmax(7rem, auto) 1rem; }
+  details.row summary::-webkit-details-marker { display: none; }
+  details.row summary::after { content: ""; width: 0.5rem; height: 0.5rem; border-right: 2px solid var(--ink); border-bottom: 2px solid var(--ink); transform: rotate(45deg); transition: transform 0.3s var(--ease); justify-self: end; margin-bottom: 0.2rem; }
+  details.row[open] summary::after { transform: rotate(-135deg); margin-bottom: -0.2rem; }
+  details.row summary:hover { background: rgba(79,94,34,0.08); }
+  details.row[open] { background: rgba(220,223,198,0.35); }
+  .eid { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); }
+  .proc { font-family: var(--serif); font-weight: 600; font-size: 1.15rem; letter-spacing: -0.01em; }
+  .amts { font-family: var(--mono); font-size: 0.8rem; line-height: 1.4; }
+  .amts s { text-decoration: none; color: var(--muted); }
+  .amts .off { color: var(--wine-mid); font-weight: 500; }
+  .lagcell { display: flex; align-items: center; gap: 0.8rem; }
+  .lagbar { position: relative; flex: 1; height: 0.8rem; background: var(--paper-deep); border: 1px solid var(--rule); border-radius: 4px; }
+  .lagbar i { position: absolute; left: 0; top: -1px; bottom: -1px; background: var(--olive); border-radius: 4px; }
+  .lagbar i.over { background: repeating-linear-gradient(135deg, var(--wine-mid) 0 5px, var(--wine-deep) 5px 7px); }
+  .lagbar b { position: absolute; top: -0.35rem; bottom: -0.35rem; width: 0; border-left: 2px dashed var(--ink); }
+  .lagnum { font-family: var(--mono); font-size: 0.8rem; min-width: 6ch; text-align: right; }
+  .flags { display: flex; gap: 0.35rem; flex-wrap: wrap; justify-content: flex-end; }
+  .pill { font-size: 0.77rem; font-weight: 550; padding: 0.15rem 0.7rem; border-radius: 999px; background: var(--paper); color: var(--ink); border: 1px solid var(--rule); white-space: nowrap; }
+  .pill.sev-low { background: #CBD3A5; border-color: #A7B07C; color: var(--olive-night); }
+  .pill.sev-medium { background: #E8D18F; border-color: #B8923A; color: #4A3A10; }
+  .pill.sev-high { background: var(--wine-mid); border-color: var(--wine-mid); color: var(--on-dark); }
+  .pill.sev-critical { background: var(--wine-night); border-color: var(--wine-night); color: var(--on-dark); }
+  .pill.clear { background: transparent; color: var(--muted); font-weight: 450; }
+  .more { padding: 0.25rem 1.25rem 1.6rem 6.7rem; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.5rem 2rem; }
+  .more h3 { font-size: 1.05rem; line-height: 1.3; margin-bottom: 0.4rem; color: var(--wine-mid); }
+  .more ul { margin: 0; padding-left: 1.1rem; }
+  .more li { margin-bottom: 0.2rem; }
+  .more p { margin: 0 0 0.5rem; }
+  .more .wide { grid-column: 1 / -1; }
+  .src { font-family: var(--mono); font-size: 0.76rem; color: var(--muted); }
+
+  /* ---------- Where it fits (slider) ---------- */
+  .slider-head { display: flex; align-items: end; justify-content: space-between; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 2rem; }
+  .arrows { display: flex; gap: 0.6rem; }
+  .arrow { position: relative; overflow: hidden; isolation: isolate; width: 3.2rem; height: 3.2rem; border-radius: 50%; border: 1.5px solid var(--ink); background: transparent; color: var(--ink); cursor: pointer; display: grid; place-items: center; transition: color 0.4s var(--ease); }
+  .arrow::before { content: ""; position: absolute; z-index: -1; inset: 0; border-radius: 50%; background: var(--ink); transform: scale(0); transition: transform 0.5s var(--ease); }
+  .arrow:hover { color: var(--paper); }
+  .arrow:hover::before { transform: scale(1.05); }
+  .arrow .i { stroke-width: 2.1; width: 1.2rem; height: 1.2rem; }
+  .arrow.prev .i { transform: scaleX(-1); }
+  .cards { display: flex; gap: 1rem; overflow-x: auto; scroll-snap-type: x mandatory; padding: 0.25rem 0 1.25rem; scrollbar-width: thin; scrollbar-color: var(--olive) transparent; }
+  .ccard { flex: 0 0 min(21rem, 84%); scroll-snap-align: start; background: linear-gradient(165deg, #F8F9EE, var(--card)); border: 1px solid var(--rule); border-radius: var(--r); padding: 0.75rem 0.75rem 1.5rem; display: flex; flex-direction: column; min-height: 17rem; box-shadow: 0 1px 0 #fff inset, 0 20px 34px -28px rgba(35,42,18,0.55); }
+  .ccard .art { position: relative; height: 7rem; border-radius: 14px; background: var(--olive-deep); overflow: hidden; margin-bottom: 1.2rem; }
+  .ccard:nth-child(even) .art { background: var(--wine-deep); }
+  .art .blob2 { position: absolute; width: 8rem; height: 8rem; right: -2rem; top: -3rem; background: rgba(232,234,216,0.1); border-radius: 42% 58% 62% 38% / 45% 38% 62% 55%; animation: morph 12s ease-in-out infinite alternate; }
+  .art i { position: absolute; left: 8%; top: 56%; height: 0.9rem; border-radius: 3px; background: var(--olive-light); transform-origin: left; transition: transform 0.8s var(--ease); }
+  .ccard:nth-child(even) .art i { background: repeating-linear-gradient(135deg, var(--claret) 0 6px, #7C1B2B 6px 9px); }
+  .art b { position: absolute; top: 46%; bottom: 14%; width: 0; border-left: 2px dashed rgba(232,234,216,0.7); }
+  .art .glyph { position: absolute; left: 0.9rem; top: 0.9rem; width: 2.6rem; height: 2.6rem; border-radius: 50%; display: grid; place-items: center; background: rgba(232,234,216,0.14); color: var(--on-dark); box-shadow: inset 0 0 0 1px rgba(232,234,216,0.3); transition: border-radius 0.6s var(--ease), transform 0.6s var(--ease); }
+  .ccard:hover .glyph { border-radius: 30%; transform: rotate(-8deg); }
+  .ccard:hover .art i { transform: scaleX(1.28); }
+  .ccard h3, .ccard p { margin-left: 0.75rem; margin-right: 0.75rem; }
+  .ccard h3 { font-size: 1.45rem; margin-bottom: 0.4rem; }
+  .ccard p { margin-top: 0; margin-bottom: 0; color: var(--muted); font-size: 0.98rem; }
+
+  /* ---------- Flow (wine) ---------- */
+  .flow { background: var(--wine-deep); }
+  .flow .b1 { width: 32rem; height: 32rem; left: -10rem; bottom: -12rem; background: var(--claret); opacity: 0.4; }
+  .flow .b2 { width: 24rem; height: 24rem; right: -6rem; top: -8rem; background: var(--brass); opacity: 0.16; animation-delay: -8s; }
+  .flow-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.2fr); gap: clamp(2rem, 6vw, 5rem); }
+  .path { list-style: none; margin: 0; padding: 0 0 0 2.9rem; position: relative; }
+  .path::before { content: ""; position: absolute; left: 0.66rem; top: 0.7rem; bottom: 0.7rem; width: 2px; background: repeating-linear-gradient(180deg, rgba(232,234,216,0.55) 0 6px, transparent 6px 12px); }
+  .path li { position: relative; padding-bottom: 2.1rem; }
+  .path li:last-child { padding-bottom: 0; }
+  .path li::before { content: ""; position: absolute; left: -2.9rem; top: 0.3rem; width: 1.4rem; height: 1.4rem; background: var(--wine-deep); border: 2px solid var(--on-dark); border-radius: 50%; transition: border-radius 0.5s var(--ease), transform 0.5s var(--ease); }
+  .path li:hover::before { border-radius: 30%; transform: rotate(45deg); }
+  .path li.human::before { background: var(--brass); width: 1.65rem; height: 1.65rem; left: -3.02rem; box-shadow: 0 0 0 6px rgba(212,174,87,0.28); }
+  .path h3 { font-size: 1.6rem; margin-bottom: 0.25rem; color: var(--on-dark); }
+  .path p { margin: 0; max-width: 46ch; }
+
+  /* ---------- FAQ ---------- */
+  .faq-grid { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.3fr); gap: clamp(2rem, 6vw, 5rem); }
+  .qa { border-top: 1px solid var(--ink); }
+  .qa:last-child { border-bottom: 1px solid var(--ink); }
+  .qa summary { list-style: none; cursor: pointer; padding: 1.3rem 0; display: flex; justify-content: space-between; gap: 1.5rem; align-items: center; font-family: var(--serif); font-variation-settings: "SOFT" 100, "WONK" 1; font-weight: 550; font-size: 1.35rem; line-height: 1.25; letter-spacing: -0.015em; }
+  .qa summary::-webkit-details-marker { display: none; }
+  .qa summary::after { content: ""; flex: none; width: 2.2rem; height: 2.2rem; border-radius: 50%; border: 1.5px solid var(--ink); background: linear-gradient(var(--ink), var(--ink)) center / 0.8rem 1.5px no-repeat, linear-gradient(var(--ink), var(--ink)) center / 1.5px 0.8rem no-repeat; transition: transform 0.5s var(--ease), border-radius 0.5s var(--ease), background-color 0.3s ease; }
+  .qa:hover summary::after { border-radius: 32%; }
+  .qa[open] summary::after { transform: rotate(135deg); background-color: var(--wine); border-color: var(--wine); background-image: linear-gradient(var(--on-dark), var(--on-dark)), linear-gradient(var(--on-dark), var(--on-dark)); }
+  .qa p { margin: 0 0 1.4rem; color: var(--muted); max-width: 58ch; }
+
+  /* ---------- API ---------- */
+  .api { background: var(--olive-night); }
+  .api .b1 { width: 34rem; height: 34rem; right: -10rem; bottom: -14rem; background: var(--wine-mid); opacity: 0.5; }
+  .api .b2 { width: 22rem; height: 22rem; left: 10%; top: -10rem; background: var(--olive); opacity: 0.4; animation-delay: -7s; }
+  .api-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr); gap: clamp(2rem, 6vw, 5rem); align-items: start; }
+  .api .sec-title { max-width: 13ch; }
+  .code { position: relative; background: rgba(20,26,10,0.88); border: 1px solid var(--line-dark); border-radius: var(--r); padding: 1.5rem; padding-top: 3.9rem; overflow-x: auto; box-shadow: 0 30px 60px -34px rgba(0,0,0,0.9); }
+  .code::before { content: ""; position: absolute; left: 1.4rem; top: 1.45rem; width: 0.7rem; height: 0.7rem; border-radius: 50%; background: var(--claret); box-shadow: 1.2rem 0 0 var(--brass), 2.4rem 0 0 var(--olive-light); }
+  .code pre { margin: 0; font-family: var(--mono); font-size: 0.86rem; line-height: 1.75; white-space: pre; color: #EADFC6; }
+  .code .btn { position: absolute; top: 0.8rem; right: 0.8rem; }
+  .api-foot { margin-top: 1.25rem; display: grid; gap: 0.35rem; }
+  .api-foot p { margin: 0; font-size: 0.95rem; }
+  .api-foot strong { color: var(--on-dark); font-weight: 550; }
+
+  /* ---------- Footer ---------- */
+  footer { background: var(--olive-black); color: var(--on-dark-mute); padding: clamp(3rem, 6vw, 4.5rem) 0 2rem; font-size: 0.97rem; }
+  .foot-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(0, 0.7fr)); gap: 2.5rem; padding-bottom: 2.5rem; border-bottom: 1px solid var(--line-dark); }
+  footer .mark { color: var(--on-dark); margin: 0 0 1rem; }
+  footer p { margin: 0; max-width: 34ch; }
+  footer h3 { font-family: var(--sans); font-variation-settings: normal; font-size: 0.95rem; font-weight: 550; letter-spacing: 0; color: var(--on-dark); margin-bottom: 0.9rem; }
+  footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+  footer a { text-decoration: none; }
+  footer li a:hover { color: var(--on-dark); text-decoration: underline; text-underline-offset: 4px; }
+  .legal { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem 2rem; padding-top: 1.5rem; font-size: 0.88rem; }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 960px) {
+    .hero-grid, .why-grid, .flow-grid, .faq-grid, .api-grid { grid-template-columns: 1fr; }
+    .quad { grid-template-columns: 1fr; }
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .more { grid-template-columns: 1fr; padding-left: 1.25rem; }
+    .summary { margin-left: 0; width: 100%; }
+    .foot-grid { grid-template-columns: 1fr 1fr; }
+    .foot-grid > :first-child { grid-column: 1 / -1; }
+    .menu-btn { display: inline-flex; }
+    .links { display: none; position: absolute; top: 100%; left: 0; right: 0; flex-direction: column; align-items: flex-start; gap: 1.1rem; padding: 1.25rem var(--pad) 1.5rem; background: var(--olive-black); border-bottom: 1px solid var(--line-dark); }
+    .nav.open .links { display: flex; }
+    .nav-in { position: relative; }
+    .nav-run { display: none; }
+    .liquid { right: -30%; top: 30%; opacity: 0.8; }
+  }
+  @media (max-width: 760px) {
+    .tiles { grid-template-columns: 1fr; }
+    .feat { grid-template-columns: 1fr; }
+    .point { grid-template-columns: 1fr; gap: 0.6rem; }
+    details.row summary { grid-template-columns: minmax(0, 1fr) auto 1rem; grid-template-areas: "proc flags chev" "id amts amts" "lag lag lag"; }
+    .eid { grid-area: id; }
+    .proc { grid-area: proc; }
+    .amts { grid-area: amts; text-align: right; }
+    .lagcell { grid-area: lag; }
+    .flags { grid-area: flags; }
+    details.row summary::after { grid-area: chev; }
+    .status { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .blob, .marquee-track, .lg-late, .art .blob2 { animation: none; }
+    .btn, .btn::before, .chev, .chev svg, .feat, .ic, .tile, .dot, .chip em, .arrow, .arrow::before, .path li::before, .qa summary::after, .art i, .glyph, .point, details.row summary::after { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Icon sprite and shared patterns -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="6" height="6" fill="#A32638"/><rect width="2.4" height="6" fill="#7C1B2B"/>
+    </pattern>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h13m-5-5.5 5.5 5.5-5.5 5.5"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21.5V3.5"/><path d="M5 5c3.4-2 6 2 9.4 0 2-1.2 3.6-.8 4.6 0v8.2c-1-.8-2.6-1.2-4.6 0-3.4 2-6-2-9.4 0"/></symbol>
+    <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.2v4.6l3 1.8M9.5 2.5h5M12 2.5V6M19 6.2l1.3-1.3"/></symbol>
+    <symbol id="i-lens" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5M10.5 7.8v5.4M7.8 10.5h5.4"/></symbol>
+    <symbol id="i-person" viewBox="0 0 24 24"><circle cx="9.5" cy="8" r="3.8"/><path d="M2.5 20.5c.7-3.8 3.6-6 7-6 2 0 3.700.7 5 2M16 17.5l2.2 2.2 3.8-4.4"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2.8 4.5 5.8v5.7c0 4.4 3 8 7.5 9.7 4.5-1.700 7.5-5.300 7.5-9.700V5.800L12 2.800Z"/><path d="m8.700 12.200 2.300 2.300 4.300-4.700"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7.500" height="7.500" rx="2"/><rect x="13" y="3.5" width="7.500" height="7.500" rx="2"/><rect x="3.5" y="13" width="7.500" height="7.500" rx="2"/><rect x="13" y="13" width="7.500" height="7.500" rx="2"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.500v13l11-6.500L8 5.500Z"/></symbol>
+    <symbol id="i-neq" viewBox="0 0 24 24"><path d="M4.500 8.500h15M4.500 15.500h15M14.500 4l-5 16"/></symbol>
+    <symbol id="i-hash" viewBox="0 0 24 24"><path d="M9.500 3.500 7.500 20.500M16.500 3.500l-2 17M4 8.500h16.500M3.500 15.500H20"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m3.800 7.800 8.200 6 8.200-6"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M11 3c.7 4.700 2.500 6.500 7 7.200-4.500.7-6.300 2.500-7 7.200-.7-4.700-2.500-6.500-7-7.200C8.500 9.500 10.300 7.700 11 3Z"/><path d="M19 16.500v4.500M16.800 18.700h4.400"/></symbol>
+    <symbol id="i-braces" viewBox="0 0 24 24"><path d="M8.500 3.500C6.300 3.500 6 5 6 7v2c0 1.500-.8 3-2.500 3 1.700 0 2.500 1.500 2.500 3v2c0 2 .3 3.500 2.500 3.500M15.500 3.500c2.200 0 2.500 1.500 2.500 3.500v2c0 1.500.8 3 2.500 3-1.700 0-2.500 1.500-2.500 3v2c0 2-.3 3.500-2.500 3.500"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.500"/><circle cx="12" cy="12" r="4.200"/><path d="M12 12h.01"/></symbol>
+    <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="5.500" r="2.500"/><circle cx="18" cy="18.500" r="2.500"/><path d="M8.500 5.500H15a3.500 3.500 0 0 1 0 7H9a3.500 3.500 0 0 0 0 7h6.500"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.500 9.500a2.600 2.600 0 1 1 3.700 2.300c-.8.400-1.200 1-1.200 1.800M12 17.200h.01"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 7.500-5 4.500 5 4.500m8-9 5 4.500-5 4.500M14 4.500l-4 15"/></symbol>
+    <symbol id="i-gift" viewBox="0 0 24 24"><rect x="3.500" y="8.500" width="17" height="4.500" rx="1.200"/><path d="M5 13v7.500h14V13M12 8.500v12"/><path d="M12 8.500C9.500 8.500 7.500 7.500 7.500 5.800 7.500 4.300 9 3.500 10.200 4.300 11.400 5.100 12 8.500 12 8.500Zm0 0c2.500 0 4.500-1 4.500-2.700 0-1.500-1.500-2.300-2.700-1.500C12.600 5.100 12 8.500 12 8.500Z"/></symbol>
+    <symbol id="i-refund" viewBox="0 0 24 24"><path d="M8.500 4.500 4 9l4.500 4.500M4 9h9.500a6 6 0 0 1 0 12H9"/></symbol>
+    <symbol id="i-percent" viewBox="0 0 24 24"><path d="M19 5 5 19"/><circle cx="7.200" cy="7.200" r="2.600"/><circle cx="16.800" cy="16.800" r="2.600"/></symbol>
+    <symbol id="i-trend" viewBox="0 0 24 24"><path d="M3 17.500 9.500 11l4 4L21 7.500M15.500 7.500H21V13"/></symbol>
+    <symbol id="i-card" viewBox="0 0 24 24"><rect x="3" y="5.500" width="18" height="13" rx="3"/><path d="M3 10h18M7 14.800h3.500"/></symbol>
+    <symbol id="i-bank" viewBox="0 0 24 24"><rect x="2.500" y="6.500" width="19" height="11" rx="2.500"/><circle cx="12" cy="12" r="2.700"/><path d="M6 9.500v.01M18 14.500v.01"/></symbol>
+  </defs>
+</svg>
+
+<nav class="nav" id="nav">
+  <div class="wrap nav-in">
+    <a class="mark" href="#top" id="top" aria-label="AEROS home">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="1" y="1" width="38" height="38" rx="11" fill="#1E2511" stroke="rgba(232,234,216,0.38)"/>
+        <rect class="lg-late" x="8" y="12" width="24" height="7" rx="2" fill="url(#hatch)"/>
+        <rect x="8" y="23" width="6" height="7" rx="2" fill="#93A64D"/>
+        <path d="M23 8v24" stroke="#E8EAD8" stroke-width="1.5" stroke-dasharray="2.5 2.5"/>
+      </svg>AEROS
+    </a>
+    <div class="links" id="links">
+      <a href="#what">What it does</a>
+      <a href="#demo">Live demo</a>
+      <a href="#fits">Where it fits</a>
+      <a href="#faq">Questions</a>
+      <a href="#api">API</a>
+    </div>
+    <span class="status" id="status" role="status">Checking API</span>
+    <button class="btn light small nav-run" id="navRun" type="button">Run the demo<span class="chev"><svg viewBox="0 0 24 24"><use href="#i-arrow"/></svg><svg viewBox="0 0 24 24"><use href="#i-arrow"/></svg></span></button>
+    <button class="menu-btn" id="menuBtn" type="button" aria-expanded="false" aria-controls="links">Menu</button>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="grid-bg"></div>
+  <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span>
+
+  <!-- Liquid shapes that morph between three forms -->
+  <svg class="liquid" viewBox="0 0 600 600" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="gWine" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A32638"/><stop offset="1" stop-color="#4A0E19"/></linearGradient>
+      <linearGradient id="gOlive" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#93A64D"/><stop offset="1" stop-color="#333D1C"/></linearGradient>
+    </defs>
+    <path fill="url(#gWine)" opacity="0.5">
+      <animate attributeName="d" dur="18s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.33;0.66;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1"
+        values="M300,40 C420,40 560,150 560,300 C560,450 440,560 300,560 C160,560 40,450 40,300 C40,150 180,40 300,40Z;
+                M300,70 C450,30 570,190 530,320 C490,450 400,540 280,550 C150,560 60,420 80,290 C100,160 190,100 300,70Z;
+                M320,50 C440,70 540,200 550,310 C560,430 430,570 300,540 C170,510 30,430 50,300 C70,170 200,30 320,50Z;
+                M300,40 C420,40 560,150 560,300 C560,450 440,560 300,560 C160,560 40,450 40,300 C40,150 180,40 300,40Z"/>
+    </path>
+    <path fill="url(#gOlive)" opacity="0.42" transform="rotate(40 300 300) translate(40 30) scale(0.88)">
+      <animate attributeName="d" dur="23s" begin="-7s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.33;0.66;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1"
+        values="M320,50 C440,70 540,200 550,310 C560,430 430,570 300,540 C170,510 30,430 50,300 C70,170 200,30 320,50Z;
+                M300,40 C420,40 560,150 560,300 C560,450 440,560 300,560 C160,560 40,450 40,300 C40,150 180,40 300,40Z;
+                M300,70 C450,30 570,190 530,320 C490,450 400,540 280,550 C150,560 60,420 80,290 C100,160 190,100 300,70Z;
+                M320,50 C440,70 540,200 550,310 C560,430 430,570 300,540 C170,510 30,430 50,300 C70,170 200,30 320,50Z"/>
+    </path>
+    <g fill="none" stroke="#D4AE57" stroke-width="1.2">
+      <path opacity="0.55" transform="translate(300 300) scale(0.84) translate(-300 -300)">
+        <animate attributeName="d" dur="18s" begin="-2s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.33;0.66;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1"
+          values="M300,40 C420,40 560,150 560,300 C560,450 440,560 300,560 C160,560 40,450 40,300 C40,150 180,40 300,40Z;
+                  M300,70 C450,30 570,190 530,320 C490,450 400,540 280,550 C150,560 60,420 80,290 C100,160 190,100 300,70Z;
+                  M320,50 C440,70 540,200 550,310 C560,430 430,570 300,540 C170,510 30,430 50,300 C70,170 200,30 320,50Z;
+                  M300,40 C420,40 560,150 560,300 C560,450 440,560 300,560 C160,560 40,450 40,300 C40,150 180,40 300,40Z"/>
+      </path>
+      <path opacity="0.35" transform="translate(300 300) scale(0.68) translate(-300 -300)">
+        <animate attributeName="d" dur="18s" begin="-4s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.33;0.66;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1"
+          values="M300,40 C420,40 560,150 560,300 C560,450 440,560 300,560 C160,560 40,450 40,300 C40,150 180,40 300,40Z;
+                  M300,70 C450,30 570,190 530,320 C490,450 400,540 280,550 C150,560 60,420 80,290 C100,160 190,100 300,70Z;
+                  M320,50 C440,70 540,200 550,310 C560,430 430,570 300,540 C170,510 30,430 50,300 C70,170 200,30 320,50Z;
+                  M300,40 C420,40 560,150 560,300 C560,450 440,560 300,560 C160,560 40,450 40,300 C40,150 180,40 300,40Z"/>
+      </path>
+      <path opacity="0.2" transform="translate(300 300) scale(0.52) translate(-300 -300)">
+        <animate attributeName="d" dur="18s" begin="-6s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.33;0.66;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1"
+          values="M300,40 C420,40 560,150 560,300 C560,450 440,560 300,560 C160,560 40,450 40,300 C40,150 180,40 300,40Z;
+                  M300,70 C450,30 570,190 530,320 C490,450 400,540 280,550 C150,560 60,420 80,290 C100,160 190,100 300,70Z;
+                  M320,50 C440,70 540,200 550,310 C560,430 430,570 300,540 C170,510 30,430 50,300 C70,170 200,30 320,50Z;
+                  M300,40 C420,40 560,150 560,300 C560,450 440,560 300,560 C160,560 40,450 40,300 C40,150 180,40 300,40Z"/>
+      </path>
+    </g>
+  </svg>
+
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <h1>Catch control errors early.</h1>
+        <p class="hero-lede">AEROS flags a broken control the moment the record arrives, measures how long errors run before detection, and has an AI agent suggest where to look first.</p>
+        <div class="cta-row">
+          <button class="btn light" id="heroRun" type="button">Run the demo<span class="chev"><svg viewBox="0 0 24 24"><use href="#i-arrow"/></svg><svg viewBox="0 0 24 24"><use href="#i-arrow"/></svg></span></button>
+          <a class="btn outline" href="#api">See the API<span class="chev"><svg viewBox="0 0 24 24"><use href="#i-arrow"/></svg><svg viewBox="0 0 24 24"><use href="#i-arrow"/></svg></span></a>
+        </div>
+        <p class="hero-note">The demo sends 14 synthetic events to the live API in dry-run mode. No alerts are sent and no AI is called.</p>
+      </div>
+
+      <figure class="lagcard" aria-label="Timeline of one rewards crediting error. Without monitoring it ran 27 days before detection. With AEROS it is flagged the day it arrives.">
+        <p class="lag-q">How long did that error run before anyone noticed?</p>
+        <div class="lag-head">
+          <div class="lag-count" aria-hidden="true"><span id="count">0</span><small>days</small></div>
+          <p class="lag-cap">One rewards error, running unseen. The detection limit is 14.</p>
+        </div>
+        <div class="plot">
+          <div class="limit" id="limit"><span>14-day limit</span></div>
+          <div class="lane">
+            <div class="lane-name">Without monitoring</div>
+            <div class="rail"><div class="fill late" id="fillLate"></div></div>
+            <div class="meta"><span class="start">Occurs Sep 3</span><span class="end" id="endPin">Found Sep 30</span></div>
+          </div>
+          <div class="lane">
+            <div class="lane-name">With AEROS</div>
+            <div class="rail"><div class="fill flag"></div></div>
+            <div class="meta"><span class="start">Flagged the day it arrives</span></div>
+          </div>
+          <div class="ruler" id="ruler" aria-hidden="true"></div>
+        </div>
+      </figure>
+    </div>
+
+    <div class="strip">
+      <p class="strip-title">Built for processes where a small gap adds up, such as these.</p>
+      <div class="marquee" aria-hidden="true">
+        <div class="marquee-track" id="marquee"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Morphing wave edge into the next section -->
+  <svg class="wave" viewBox="0 0 1440 120" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+    <path fill="#E8EAD8">
+      <animate attributeName="d" dur="11s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"
+        values="M0,50 C180,100 360,0 540,40 C720,80 900,100 1080,50 C1260,0 1380,30 1440,50 L1440,120 L0,120Z;
+                M0,70 C180,20 360,90 540,60 C720,30 900,10 1080,60 C1260,100 1380,70 1440,60 L1440,120 L0,120Z;
+                M0,50 C180,100 360,0 540,40 C720,80 900,100 1080,50 C1260,0 1380,30 1440,50 L1440,120 L0,120Z"/>
+    </path>
+  </svg>
+</header>
+
+<main>
+  <section class="what" id="what">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="tag"><span class="badge"><svg class="i"><use href="#i-grid"/></svg></span>What AEROS does</span>
+        <h2 class="sec-title wide">Four jobs, done the moment a record arrives</h2>
+      </div>
+      <div class="quad">
+        <article class="feat">
+          <div class="ic"><svg class="i"><use href="#i-flag"/></svg></div>
+          <div><h3>Flag the break</h3><p>Expected and actual amounts are compared as the record arrives, so a mismatch is raised straight away instead of at month end.</p></div>
+        </article>
+        <article class="feat">
+          <div class="ic"><svg class="i"><use href="#i-timer"/></svg></div>
+          <div><h3>Measure the lag</h3><p>AEROS counts the days between an error occurring and someone finding it, then checks that gap against your limit.</p></div>
+        </article>
+        <article class="feat">
+          <div class="ic"><svg class="i"><use href="#i-lens"/></svg></div>
+          <div><h3>Suggest where to look</h3><p>An AI agent proposes likely causes, the impact so far and what to check first, so the review starts with a lead.</p></div>
+        </article>
+        <article class="feat">
+          <div class="ic"><svg class="i"><use href="#i-person"/></svg></div>
+          <div><h3>Keep a person in charge</h3><p>The agent only analyses and recommends. It never changes data, and a person reviews every alert.</p></div>
+        </article>
+      </div>
+      <div class="center-cta"><button class="btn" id="whatRun" type="button">Try it on 14 events<span class="chev"><svg viewBox="0 0 24 24"><use href="#i-arrow"/></svg><svg viewBox="0 0 24 24"><use href="#i-arrow"/></svg></span></button></div>
+    </div>
+  </section>
+
+  <section class="why dark" id="why">
+    <span class="blob b1"></span><span class="blob b2"></span>
+    <div class="wrap">
+      <div class="why-grid">
+        <div>
+          <span class="tag"><span class="badge"><svg class="i"><use href="#i-shield"/></svg></span>Why it is safe to try</span>
+          <h2 class="sec-title">Quiet by default, honest about what it did</h2>
+          <p class="sec-intro">Nothing leaves the building until you switch live mode on yourself.</p>
+        </div>
+        <div class="points">
+          <div class="point"><span class="badge"><svg class="i"><use href="#i-play"/></svg></span><div><h3>Dry run is the default</h3><p>Requests use rule-based triage only. No alerts are sent and no AI is called.</p></div></div>
+          <div class="point"><span class="badge"><svg class="i"><use href="#i-shield"/></svg></span><div><h3>Live mode needs your token</h3><p>Slack or email alerts and Claude triage need a server-side token, sent as a bearer header. Without it, live mode stays off.</p></div></div>
+          <div class="point"><span class="badge"><svg class="i"><use href="#i-target"/></svg></span><div><h3>Rules first, AI second</h3><p>Every alert says whether its triage came from rules or from the agent, along with how confident it is.</p></div></div>
+          <div class="point"><span class="badge"><svg class="i"><use href="#i-code"/></svg></span><div><h3>Open source, MIT licence</h3><p>Read it, run it, change it. Nothing is hidden behind the page.</p></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="built">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="tag"><span class="badge"><svg class="i"><use href="#i-grid"/></svg></span>What is built in</span>
+        <h2 class="sec-title wide">Two rules, three ways to be told, one endpoint</h2>
+      </div>
+      <div class="tiles">
+        <div class="tile"><div class="dot"><svg class="i"><use href="#i-neq"/></svg></div><h3>Mismatch rule</h3><p>Raises an alert whenever expected and actual do not match, and reports the gap.</p></div>
+        <div class="tile"><div class="dot"><svg class="i"><use href="#i-timer"/></svg></div><h3>Late-detection rule</h3><p>Flags errors found after your limit, which you can set from 1 to 365 days. The default is 14.</p></div>
+        <div class="tile"><div class="dot"><svg class="i"><use href="#i-hash"/></svg></div><h3>Slack alerts</h3><p>Post alerts to a channel through a webhook you control.</p></div>
+        <div class="tile"><div class="dot"><svg class="i"><use href="#i-mail"/></svg></div><h3>Email alerts</h3><p>Send alerts over your own SMTP server to the address you choose.</p></div>
+        <div class="tile"><div class="dot"><svg class="i"><use href="#i-spark"/></svg></div><h3>Claude triage</h3><p>In live mode, an agent suggests causes, impact and next steps for each alert.</p></div>
+        <div class="tile"><div class="dot"><svg class="i"><use href="#i-braces"/></svg></div><h3>One JSON endpoint</h3><p>Post up to 200 events at a time to a single route. A GET on the same route is a health check.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="demo" id="demo">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="tag"><span class="badge"><svg class="i"><use href="#i-play"/></svg></span>Live demo</span>
+        <h2 class="sec-title wide">Fourteen events, checked by the real API</h2>
+        <p class="sec-intro">Each row is a synthetic event. The bar shows how many days the error ran before it was found, against your limit. Open a row to see what the agent would tell you to check.</p>
+      </div>
+
+      <div class="controls">
+        <button class="btn" id="run" type="button">Run the demo<span class="chev"><svg viewBox="0 0 24 24"><use href="#i-arrow"/></svg><svg viewBox="0 0 24 24"><use href="#i-arrow"/></svg></span></button>
+        <label class="slider">Flag errors found after
+          <input type="range" id="limitRange" min="3" max="30" value="14" step="1">
+          <output id="limitOut" for="limitRange">14 days</output>
+        </label>
+        <p class="summary" id="summary" aria-live="polite"></p>
+      </div>
+
+      <div class="ledger" id="ledger" aria-live="polite">
+        <div class="empty"><strong>Nothing run yet.</strong>Select Run the demo to send the events. Move the slider afterwards to see which errors would count as late under a stricter or looser limit.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="fits">
+    <div class="wrap">
+      <div class="slider-head">
+        <div>
+          <span class="tag"><span class="badge"><svg class="i"><use href="#i-target"/></svg></span>Where it fits</span>
+          <h2 class="sec-title wide">Processes where a small gap adds up</h2>
+        </div>
+        <div class="arrows">
+          <button class="arrow prev" id="prev" type="button" aria-label="Previous"><svg class="i"><use href="#i-arrow"/></svg></button>
+          <button class="arrow" id="next" type="button" aria-label="Next"><svg class="i"><use href="#i-arrow"/></svg></button>
+        </div>
+      </div>
+      <div class="cards" id="cards" tabindex="0" aria-label="Example processes">
+        <article class="ccard"><div class="art"><span class="blob2"></span><span class="glyph"><svg class="i"><use href="#i-gift"/></svg></span><i style="width:52%"></i><b style="left:46%"></b></div><h3>Rewards crediting</h3><p>Points or credits that land short of what the customer earned.</p></article>
+        <article class="ccard"><div class="art"><span class="blob2"></span><span class="glyph"><svg class="i"><use href="#i-refund"/></svg></span><i style="width:28%"></i><b style="left:46%"></b></div><h3>Refund posting</h3><p>Refunds that post for a different amount than the one approved.</p></article>
+        <article class="ccard"><div class="art"><span class="blob2"></span><span class="glyph"><svg class="i"><use href="#i-percent"/></svg></span><i style="width:64%"></i><b style="left:46%"></b></div><h3>Fee calculation</h3><p>Fees that drift away from the published schedule, one account at a time.</p></article>
+        <article class="ccard"><div class="art"><span class="blob2"></span><span class="glyph"><svg class="i"><use href="#i-trend"/></svg></span><i style="width:34%"></i><b style="left:46%"></b></div><h3>Interest accrual</h3><p>Accruals that quietly stop matching the rate they should follow.</p></article>
+        <article class="ccard"><div class="art"><span class="blob2"></span><span class="glyph"><svg class="i"><use href="#i-card"/></svg></span><i style="width:60%"></i><b style="left:46%"></b></div><h3>Chargeback booking</h3><p>Disputes that are booked late, or booked for the wrong amount.</p></article>
+        <article class="ccard"><div class="art"><span class="blob2"></span><span class="glyph"><svg class="i"><use href="#i-bank"/></svg></span><i style="width:24%"></i><b style="left:46%"></b></div><h3>Payout settlement</h3><p>Payouts that settle a little over or a little under what was due.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="flow dark" id="flow">
+    <span class="blob b1"></span><span class="blob b2"></span>
+    <div class="wrap">
+      <div class="flow-grid">
+        <div>
+          <span class="tag"><span class="badge"><svg class="i"><use href="#i-route"/></svg></span>How it works</span>
+          <h2 class="sec-title">What happens to every event</h2>
+        </div>
+        <ol class="path">
+          <li><h3>The record arrives</h3><p>AEROS compares what the control expected with what actually happened, straight away.</p></li>
+          <li><h3>A mismatch is flagged</h3><p>If the amounts differ, an alert is raised with a severity, not at month end.</p></li>
+          <li><h3>The lag is measured</h3><p>The days between the error occurring and someone finding it, checked against your limit.</p></li>
+          <li><h3>The agent suggests where to look</h3><p>Likely causes, business impact and next steps. Rules only in dry-run, Claude in live mode.</p></li>
+          <li class="human"><h3>A person reviews it</h3><p>The agent only analyses and recommends. It never changes data.</p></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap">
+      <div class="faq-grid">
+        <div>
+          <span class="tag"><span class="badge"><svg class="i"><use href="#i-help"/></svg></span>Questions</span>
+          <h2 class="sec-title">Frequently asked questions</h2>
+        </div>
+        <div>
+          <details class="qa"><summary>Does the demo send alerts or call an AI?</summary><p>No. The demo always runs in dry-run mode, which uses rule-based triage only. Nothing is sent to Slack or email and no AI model is called.</p></details>
+          <details class="qa"><summary>Can the AI agent change my data?</summary><p>No. The agent only analyses events and recommends where to look. A person reviews every alert.</p></details>
+          <details class="qa"><summary>What does an event look like?</summary><p>Each event has an id, a process name, the expected and actual amounts, the date the error occurred and the date it was detected. The curl example in the API section shows one.</p></details>
+          <details class="qa"><summary>How is the detection lag measured?</summary><p>It is the number of days between the date the error occurred and the date it was detected. If that is longer than your limit, the event is flagged as found late. The limit defaults to 14 days and can be set from 1 to 365.</p></details>
+          <details class="qa"><summary>What do I need to turn on live mode?</summary><p>Set a token on the server and send it as a bearer token with each request. Live mode then adds Claude triage and, if you configure them, Slack or email alerts. Without the token, live mode is disabled.</p></details>
+          <details class="qa"><summary>How many events can I send at once?</summary><p>Up to 200 events in a single request, within a body limit of about 100 KB.</p></details>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="api dark" id="api">
+    <span class="blob b1"></span><span class="blob b2"></span>
+    <div class="wrap">
+      <div class="api-grid">
+        <div>
+          <span class="tag"><span class="badge"><svg class="i"><use href="#i-code"/></svg></span>API</span>
+          <h2 class="sec-title">Send your own events</h2>
+          <p class="sec-intro" style="color:var(--on-dark-mute)">Post events as they happen. Live mode adds alerts to Slack or email and Claude triage. It needs a server-side token, so only you can turn it on.</p>
+        </div>
+        <div>
+          <div class="code">
+            <button class="btn small nochev outline" id="copy" type="button">Copy command</button>
+            <pre id="curl"></pre>
+          </div>
+          <div class="api-foot">
+            <p><strong>Dry run is the default.</strong> Without the token, requests use rule-based triage only.</p>
+            <p><strong>Open source, MIT licence.</strong> A person reviews every alert.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <a class="mark" href="#top" aria-label="AEROS home">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <rect x="1" y="1" width="38" height="38" rx="11" fill="#1E2511" stroke="rgba(232,234,216,0.38)"/>
+            <rect class="lg-late" x="8" y="12" width="24" height="7" rx="2" fill="url(#hatch)"/>
+            <rect x="8" y="23" width="6" height="7" rx="2" fill="#93A64D"/>
+            <path d="M23 8v24" stroke="#E8EAD8" stroke-width="1.5" stroke-dasharray="2.5 2.5"/>
+          </svg>AEROS
+        </a>
+        <p>Catches control errors early, measures how long they ran, and suggests where to look first.</p>
+      </div>
+      <div>
+        <h3>Product</h3>
+        <ul>
+          <li><a href="#what">What it does</a></li>
+          <li><a href="#demo">Live demo</a></li>
+          <li><a href="#fits">Where it fits</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Build with it</h3>
+        <ul>
+          <li><a href="#flow">How it works</a></li>
+          <li><a href="#faq">Questions</a></li>
+          <li><a href="#api">API</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="legal">
+      <span>Open source under the MIT licence.</span>
+      <span>The agent recommends. A person reviews every alert.</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const API = "/api/ingest";
+
+  /* Pause SVG morphing for people who prefer reduced motion */
+  if (reduced) {
+    document.querySelectorAll("svg").forEach((s) => { if (s.pauseAnimations) s.pauseAnimations(); });
+  }
+
+  /* ---------- Nav ---------- */
+  const nav = $("nav"), menuBtn = $("menuBtn");
+  menuBtn.addEventListener("click", () => {
+    const open = nav.classList.toggle("open");
+    menuBtn.setAttribute("aria-expanded", String(open));
+  });
+  $("links").addEventListener("click", (e) => {
+    if (e.target.closest("a")) { nav.classList.remove("open"); menuBtn.setAttribute("aria-expanded", "false"); }
+  });
+
+  /* ---------- Process logo chips ---------- */
+  const PROCS = [
+    ["Rewards crediting", "i-gift"], ["Refund posting", "i-refund"], ["Fee calculation", "i-percent"],
+    ["Interest accrual", "i-trend"], ["Chargeback booking", "i-card"], ["Payout settlement", "i-bank"]
+  ];
+  const track = $("marquee");
+  const chipHTML = PROCS.map(([n, ic]) =>
+    '<span class="chip"><em><svg class="i"><use href="#' + ic + '"/></svg></em>' + n + "</span>").join("");
+  track.innerHTML = chipHTML.repeat(4);
+
+  /* ---------- Hero timeline ---------- */
+  const ruler = $("ruler");
+  for (let d = 1; d <= 31; d++) {
+    const x = ((d - 1) / 30) * 100;
+    const tick = document.createElement("i");
+    tick.style.left = x + "%";
+    if ((d - 1) % 7 === 0) {
+      tick.className = "major";
+      const lab = document.createElement("b");
+      lab.style.left = x + "%";
+      lab.textContent = "Sep " + d;
+      ruler.appendChild(lab);
+    }
+    ruler.appendChild(tick);
+  }
+
+  const fillLate = $("fillLate"), count = $("count"), endPin = $("endPin"), limit = $("limit");
+  const TOTAL = 27, MAX_W = 90, LIMIT_AT = 14;
+  const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  function paint(p) {
+    const e = ease(p);
+    fillLate.style.width = (e * MAX_W) + "%";
+    const days = Math.round(e * TOTAL);
+    count.textContent = days;
+    limit.classList.toggle("passed", days > LIMIT_AT);
+    endPin.classList.toggle("show", p >= 1);
+  }
+  if (reduced) {
+    paint(1);
+  } else {
+    const DURATION = 3200, DELAY = 700;
+    let start = null;
+    const step = (ts) => {
+      if (start === null) start = ts;
+      const p = Math.min(1, Math.max(0, (ts - start - DELAY) / DURATION));
+      paint(p);
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  /* ---------- API status ---------- */
+  const status = $("status");
+  fetch(API, { cache: "no-store" })
+    .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then((j) => {
+      status.textContent = j.live_mode ? "API online, live mode" : "API online, dry run";
+      status.classList.add("up");
+    })
+    .catch(() => {
+      status.textContent = "API unreachable";
+      status.classList.add("down");
+    });
+
+  /* ---------- Demo ---------- */
+  const SAMPLE = [
+    ["EV-01", "Rewards crediting", 1200, 1150, 3, 27],
+    ["EV-02", "Refund posting", 480, 480, 4, 1],
+    ["EV-03", "Fee calculation", 75, 75, 5, 0],
+    ["EV-04", "Interest accrual", 9320, 9320, 6, 2],
+    ["EV-05", "Chargeback booking", 310, 0, 8, 6],
+    ["EV-06", "Payout settlement", 15000, 14940, 9, 3],
+    ["EV-07", "Rewards crediting", 600, 600, 10, 1],
+    ["EV-08", "Refund posting", 220, 260, 11, 19],
+    ["EV-09", "Fee calculation", 75, 70, 12, 2],
+    ["EV-10", "Interest accrual", 9410, 9410, 14, 0],
+    ["EV-11", "Payout settlement", 8200, 8200, 15, 4],
+    ["EV-12", "Chargeback booking", 640, 640, 16, 2],
+    ["EV-13", "Rewards crediting", 900, 810, 1, 36],
+    ["EV-14", "Refund posting", 530, 530, 20, 5]
+  ];
+  const iso = (dayOfSep) => new Date(Date.UTC(2026, 8, dayOfSep)).toISOString().slice(0, 10);
+  const EVENTS = SAMPLE.map(([id, process, expected, actual, occ, lag]) => ({
+    id, process, expected, actual, occurred: iso(occ), detected: iso(occ + lag)
+  }));
+  const SCALE_DAYS = 45;
+  const RULE_LABEL = { reconciliation_break: "Mismatch", late_detection: "Found late" };
+  const fmt = (n) => Number(n).toLocaleString("en-US");
+
+  const runBtn = $("run"), ledger = $("ledger"), summary = $("summary");
+  const triggers = [$("heroRun"), $("navRun"), $("whatRun")];
+  const allBtns = [runBtn, ...triggers];
+  const range = $("limitRange"), rangeOut = $("limitOut");
+  let hasRun = false, debounce = null, running = false;
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+  const lagDays = (e) => Math.round((Date.parse(e.detected) - Date.parse(e.occurred)) / 86400000);
+
+  function render(data, limitDays) {
+    const byEvent = {};
+    (data.alerts || []).forEach((a) => { (byEvent[a.event_id] = byEvent[a.event_id] || []).push(a); });
+    ledger.replaceChildren();
+
+    let flagged = 0, longest = 0;
+    EVENTS.forEach((ev) => {
+      const alerts = byEvent[ev.id] || [];
+      const lag = lagDays(ev);
+      longest = Math.max(longest, lag);
+      if (alerts.length) flagged++;
+
+      const row = el("details", "row");
+      const sum = el("summary");
+      sum.appendChild(el("span", "eid", ev.id));
+      sum.appendChild(el("span", "proc", ev.process));
+
+      const amts = el("span", "amts");
+      amts.appendChild(el("s", "", "Expected " + fmt(ev.expected)));
+      amts.appendChild(document.createElement("br"));
+      amts.appendChild(el("span", ev.expected !== ev.actual ? "off" : "", "Actual " + fmt(ev.actual)));
+      sum.appendChild(amts);
+
+      const lc = el("span", "lagcell");
+      const bar = el("span", "lagbar");
+      const fill = el("i", lag > limitDays ? "over" : "");
+      fill.style.width = Math.min(100, (lag / SCALE_DAYS) * 100) + "%";
+      const tickEl = el("b");
+      tickEl.style.left = Math.min(100, (limitDays / SCALE_DAYS) * 100) + "%";
+      bar.append(fill, tickEl);
+      lc.append(bar, el("span", "lagnum", lag + (lag === 1 ? " day" : " days")));
+      sum.appendChild(lc);
+
+      const flags = el("span", "flags");
+      if (!alerts.length) flags.appendChild(el("span", "pill clear", "Clear"));
+      alerts.forEach((a) => {
+        const sev = String(a.severity || "").toLowerCase();
+        flags.appendChild(el("span", "pill sev-" + sev, RULE_LABEL[a.rule] || a.rule));
+      });
+      sum.appendChild(flags);
+      row.appendChild(sum);
+
+      const more = el("div", "more");
+      if (!alerts.length) {
+        more.appendChild(el("p", "wide", "No rule fired for this event. Amounts matched and it was found within " + limitDays + " days."));
+      } else {
+        const t = alerts[0].triage || {};
+        const what = el("div");
+        what.appendChild(el("h3", "", "What was flagged"));
+        alerts.forEach((a) => what.appendChild(el("p", "", a.detail + " (" + a.severity + ")")));
+        const why = el("div");
+        why.appendChild(el("h3", "", "Likely causes"));
+        const ul = el("ul");
+        (t.likely_causes || []).forEach((c) => ul.appendChild(el("li", "", c)));
+        why.appendChild(ul);
+        const next = el("div");
+        next.appendChild(el("h3", "", "Check first"));
+        const ol = el("ul");
+        (t.next_steps || []).forEach((c) => ol.appendChild(el("li", "", c)));
+        next.appendChild(ol);
+        more.append(what, why, next);
+        if (t.impact) {
+          const imp = el("div", "wide");
+          imp.appendChild(el("p", "", t.impact));
+          imp.appendChild(el("span", "src", "Triage source: " + (t.source || "rules") + ", confidence " + (t.confidence || "n/a")));
+          more.appendChild(imp);
+        }
+      }
+      row.appendChild(more);
+      ledger.appendChild(row);
+    });
+
+    const total = (data.alerts || []).length;
+    summary.textContent = total + (total === 1 ? " alert" : " alerts") + " on " + flagged + " of " + EVENTS.length + " events. Longest lag: " + longest + " days.";
+  }
+
+  function showError(msg) {
+    ledger.replaceChildren();
+    const box = el("div", "error");
+    box.setAttribute("role", "alert");
+    box.appendChild(el("strong", "", "The demo could not run. "));
+    box.appendChild(document.createTextNode(msg));
+    ledger.appendChild(box);
+    summary.textContent = "";
+  }
+
+  /* Change a button's label without losing its arrow */
+  function setLabel(btn, text) {
+    const chev = btn.querySelector(".chev");
+    btn.textContent = text;
+    if (chev) btn.appendChild(chev);
+  }
+
+  async function run() {
+    if (running) return;
+    running = true;
+    allBtns.forEach((b) => { b.disabled = true; });
+    setLabel(runBtn, "Running");
+    const limitDays = Number(range.value);
+    try {
+      const res = await fetch(API, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dry_run: true, limit_days: limitDays, events: EVENTS })
+      });
+      if (!res.ok) throw new Error("The API answered with status " + res.status + ". Check the function logs in Vercel for the cause.");
+      render(await res.json(), limitDays);
+      hasRun = true;
+    } catch (err) {
+      showError(err && err.message ? err.message : "The request failed. Check your connection and try again.");
+    } finally {
+      running = false;
+      allBtns.forEach((b) => { b.disabled = false; });
+      setLabel(runBtn, "Run again");
+    }
+  }
+
+  runBtn.addEventListener("click", run);
+  triggers.forEach((b) => b.addEventListener("click", () => {
+    $("demo").scrollIntoView({ behavior: reduced ? "auto" : "smooth" });
+    run();
+  }));
+  range.addEventListener("input", () => {
+    rangeOut.textContent = range.value + " days";
+    if (!hasRun) return;
+    clearTimeout(debounce);
+    debounce = setTimeout(run, 350);
+  });
+
+  /* ---------- Slider ---------- */
+  const cards = $("cards");
+  const stepBy = () => Math.min(340, cards.clientWidth * 0.85);
+  $("prev").addEventListener("click", () => cards.scrollBy({ left: -stepBy(), behavior: reduced ? "auto" : "smooth" }));
+  $("next").addEventListener("click", () => cards.scrollBy({ left: stepBy(), behavior: reduced ? "auto" : "smooth" }));
+
+  /* ---------- API snippet ---------- */
+  const host = /^https?:/.test(location.origin) ? location.origin : "https://YOUR-DEPLOYMENT";
+  const curlText =
+`curl -X POST ${host}/api/ingest \\
+  -H "content-type: application/json" \\
+  -H "authorization: Bearer $AEROS_API_TOKEN" \\
+  -d '{"dry_run": false, "events": [{
+        "id": "EV-1",
+        "process": "Rewards crediting",
+        "expected": 1200,
+        "actual": 1150,
+        "occurred": "2026-09-03",
+        "detected": "2026-09-30"
+      }]}'`;
+  $("curl").textContent = curlText;
+
+  const copyBtn = $("copy");
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(curlText);
+      copyBtn.textContent = "Copied";
+    } catch (_) {
+      const r = document.createRange();
+      r.selectNodeContents($("curl"));
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      copyBtn.textContent = "Press Ctrl+C";
+    }
+    setTimeout(() => { copyBtn.textContent = "Copy command"; }, 1800);
+  });
+})();
+</script>
+</body>
+</html>

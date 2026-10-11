@@ -1,0 +1,9 @@
+{
+  "outputDirectory": "public",
+  "functions": {
+    "api/*.py": {
+      "maxDuration": 30,
+      "includeFiles": "api/_aeros.py"
+    }
+  }
+}

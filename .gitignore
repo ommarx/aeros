@@ -1,0 +1,15 @@
+logs/
+__pycache__/
+*.pyc
+.env
+.vercel/
+.vercel
+.env*
+.env*
+*.pem
+*.key
+sent.txt
+*.csv
+!sample/events.csv
+.vercel/
+logs/
