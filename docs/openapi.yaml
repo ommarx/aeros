@@ -1,0 +1,96 @@
+openapi: 3.0.3
+info:
+  title: AEROS API
+  version: "1"
+  description: Control-error detection and triage. Prototype. See docs/DATA_HANDLING.md before sending data.
+servers:
+  - url: https://aeros-peach.vercel.app
+paths:
+  /api/v1/ingest:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+    post:
+      summary: Check a batch of events
+      security: [ {}, { bearerAuth: [] } ]
+      parameters:
+        - in: header
+          name: x-request-id
+          schema: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IngestRequest" }
+      responses:
+        "200": { description: Checked, content: { application/json: { schema: { $ref: "#/components/schemas/IngestResponse" } } } }
+        "400": { description: Invalid request, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { description: Live mode without a valid token, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "413": { description: Body too large, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { description: Rate limited, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "500": { description: Internal error, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, description: "Required only when dry_run is false. 32+ characters." }
+  schemas:
+    Event:
+      type: object
+      required: [id, process, expected, actual, occurred]
+      properties:
+        id: { type: string, maxLength: 64, description: Opaque ID. No personal data. }
+        process: { type: string, maxLength: 64 }
+        expected: { type: number }
+        actual: { type: number }
+        occurred: { type: string, format: date }
+        detected: { type: string, format: date }
+    IngestRequest:
+      type: object
+      required: [events]
+      properties:
+        events: { type: array, minItems: 1, maxItems: 200, items: { $ref: "#/components/schemas/Event" } }
+        dry_run: { type: boolean, default: true }
+        skip_invalid: { type: boolean, default: false }
+        limit_days: { type: integer, minimum: 1, maximum: 365, default: 14 }
+        tolerance: { type: number, minimum: 0, default: 0.005 }
+    Triage:
+      type: object
+      properties:
+        source: { type: string, enum: [rules, claude] }
+        confidence: { type: string, enum: [low, medium, high] }
+        likely_causes: { type: array, items: { type: string } }
+        impact: { type: string }
+        next_steps: { type: array, items: { type: string } }
+    Alert:
+      type: object
+      properties:
+        event_id: { type: string }
+        process: { type: string }
+        rule: { type: string, enum: [reconciliation_break, late_detection, repeat_pattern] }
+        rules: { type: array, items: { type: string } }
+        severity: { type: string, enum: [Medium, High] }
+        detail: { type: string }
+        triage: { $ref: "#/components/schemas/Triage" }
+    IngestResponse:
+      type: object
+      properties:
+        api_version: { type: string }
+        mode: { type: string, enum: [dry_run, live] }
+        events: { type: integer }
+        rejected: { type: array, items: { type: object, properties: { index: { type: integer }, error: { type: string } } } }
+        alerts: { type: array, items: { $ref: "#/components/schemas/Alert" } }
+        delivered: { type: array, items: { type: string } }
+        ai_calls: { type: integer }
+        request_id: { type: string }
+    Health:
+      type: object
+      properties: { service: { type: string }, status: { type: string }, api_version: { type: string }, request_id: { type: string } }
+    Error:
+      type: object
+      properties:
+        error: { type: object, properties: { code: { type: string }, message: { type: string } } }
+        request_id: { type: string }

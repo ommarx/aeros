@@ -22,7 +22,7 @@ It is **read-only**: it alerts and recommends, never changes data. A person revi
 ```
 python cli.py --simulate                  # synthetic stream
 python cli.py --watch sample/events.csv   # alert as rows are appended (restart-safe, bad rows skipped)
-python -m unittest discover -s tests      # 27 tests
+python -m unittest discover -s tests      # full test suite
 ```
 
 ## Send real events to the deployed API
@@ -38,7 +38,8 @@ Import the repo (Framework preset: Other). `public/` is the site, `api/ingest.py
 
 | Environment variable | Purpose |
 |---|---|
-| `AEROS_API_TOKEN` | Enables live mode. Callers send `Authorization: Bearer <token>`. Without it live mode is off. |
+| `AEROS_API_TOKENS` | Per-client tokens for live mode: `acme:<token>,beta:<token>`. Each 32+ characters. Callers send `Authorization: Bearer <token>`. |
+| `AEROS_API_TOKEN` | Single-token alternative (client name `default`). Without a valid token, live mode is off. |
 | `ANTHROPIC_API_KEY`, `AEROS_MODEL` | Claude triage (default model claude-sonnet-5-5) |
 | `SLACK_WEBHOOK_URL` | Slack alerts |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `ALERT_TO` | Email alerts |
@@ -50,6 +51,7 @@ Import the repo (Framework preset: Other). `public/` is the site, `api/ingest.py
 - Live mode: up to 200 events / 100 KB, needs the bearer token. Failed token attempts count toward the rate limit.
 - `skip_invalid: true` processes valid rows and lists the rest under `rejected`; otherwise any invalid row rejects the batch with a 400 before anything is sent.
 - `GET /api/ingest` is a health check and reveals no configuration.
+- Full reference: [docs/API.md](docs/API.md), [docs/openapi.yaml](docs/openapi.yaml). Data handling: [docs/DATA_HANDLING.md](docs/DATA_HANDLING.md). Security: [SECURITY.md](SECURITY.md). What is still missing for production: [docs/CLIENT_READINESS.md](docs/CLIENT_READINESS.md).
 
 ## Security notes
 - Secrets live only in Vercel environment variables and your terminal session. `.gitignore` excludes `.env*`, keys, `logs/`, `.vercel/`, `sent.txt` and `*.csv` (except the synthetic sample).

@@ -172,6 +172,7 @@ class API(unittest.TestCase):
     def setUp(self):
         ingest._hits.clear()
         os.environ.pop("AEROS_API_TOKEN", None)
+        os.environ.pop("AEROS_API_TOKENS", None)
 
     def post(self, body, headers=None, raw=False):
         data = body if raw else json.dumps(body).encode()
@@ -187,7 +188,8 @@ class API(unittest.TestCase):
 
     def test_health_hides_config(self):
         r = json.load(urllib.request.urlopen(self.url))
-        self.assertEqual(r, dict(service="aeros", status="ok"))
+        self.assertEqual({k: r[k] for k in ("service", "status", "api_version")}, dict(service="aeros", status="ok", api_version="1"))
+        self.assertNotIn("live_mode", r)
 
     def test_dry_run_works_and_sends_nothing(self):
         c, b = self.post({"events": [self.E(1)]})
@@ -197,10 +199,11 @@ class API(unittest.TestCase):
         self.assertEqual(self.post([1, 2])[0], 400)
 
     def test_live_needs_token(self):
+        tok = "t" * 40
         self.assertEqual(self.post({"dry_run": False, "events": [self.E(1)]})[0], 401)
-        os.environ["AEROS_API_TOKEN"] = "secret-token"
+        os.environ["AEROS_API_TOKEN"] = tok
         self.assertEqual(self.post({"dry_run": False, "events": [self.E(1)]}, {"authorization": "Bearer wrong"})[0], 401)
-        c, b = self.post({"dry_run": False, "events": [self.E(1)]}, {"authorization": "Bearer secret-token"})
+        c, b = self.post({"dry_run": False, "events": [self.E(1)]}, {"authorization": f"Bearer {tok}"})
         self.assertEqual((c, b["mode"]), (200, "live"))
 
     def test_bad_row_rejects_batch_unless_skip_invalid(self):
@@ -219,8 +222,73 @@ class API(unittest.TestCase):
         self.assertIn(429, codes)
 
     def test_failed_auth_is_rate_limited(self):
-        os.environ["AEROS_API_TOKEN"] = "t"
+        os.environ["AEROS_API_TOKEN"] = "t" * 40
         codes = [self.post({"dry_run": False, "events": [self.E(1)]})[0] for _ in range(32)]
+        self.assertIn(429, codes)
+
+
+class ClientReadiness(API):
+    """Multi-client auth, request ids, error shape, audit log, headers."""
+
+    def raw(self, body, headers=None):
+        req = urllib.request.Request(self.url, json.dumps(body).encode(), {"content-type": "application/json", **(headers or {})})
+        try:
+            return urllib.request.urlopen(req)
+        except urllib.error.HTTPError as e:
+            return e
+
+    def test_weak_token_never_enables_live_mode(self):
+        os.environ["AEROS_API_TOKEN"] = "short"
+        self.assertEqual(self.post({"dry_run": False, "events": [self.E(1)]}, {"authorization": "Bearer short"})[0], 401)
+
+    def test_multiple_clients_each_get_their_own_token(self):
+        a, b = "a" * 40, "b" * 40
+        os.environ["AEROS_API_TOKENS"] = f"acme:{a},beta:{b}"
+        for tok in (a, b):
+            self.assertEqual(self.post({"dry_run": False, "events": [self.E(1)]}, {"authorization": f"Bearer {tok}"})[0], 200)
+        self.assertEqual(self.post({"dry_run": False, "events": [self.E(1)]}, {"authorization": "Bearer " + "c" * 40})[0], 401)
+
+    def test_request_id_generated_echoed_and_sanitised(self):
+        r = self.raw({"events": [self.E(1)]})
+        self.assertTrue(r.headers["x-request-id"])
+        r2 = self.raw({"events": [self.E(1)]}, {"x-request-id": "my-trace-id-123"})
+        self.assertEqual(r2.headers["x-request-id"], "my-trace-id-123")
+        self.assertEqual(json.load(r2)["request_id"], "my-trace-id-123")
+        r3 = self.raw({"events": [self.E(1)]}, {"x-request-id": "bad id with spaces <script>"})
+        self.assertNotIn("script", r3.headers["x-request-id"])
+
+    def test_errors_have_stable_shape(self):
+        c, b = self.post({"events": []})
+        self.assertEqual(c, 400)
+        self.assertEqual(b["error"]["code"], "bad_events")
+        self.assertIn("request_id", b)
+        c, b = self.post({"dry_run": False, "events": [self.E(1)]})
+        self.assertEqual((c, b["error"]["code"]), (401, "unauthorized"))
+
+    def test_security_headers_and_version(self):
+        r = self.raw({"events": [self.E(1)]})
+        self.assertEqual(r.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(r.headers["cache-control"], "no-store")
+        self.assertEqual(r.headers["x-aeros-api-version"], "1")
+
+    def test_audit_log_has_counts_and_client_but_no_secrets_or_event_data(self):
+        import io, contextlib
+        tok = "k" * 40
+        os.environ["AEROS_API_TOKENS"] = f"acme:{tok}"
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            self.post({"dry_run": False, "events": [dict(self.E(1), process="SECRET-PROCESS-NAME")]}, {"authorization": f"Bearer {tok}"})
+        line = [l for l in buf.getvalue().splitlines() if l.startswith("{")][-1]
+        rec = json.loads(line)
+        self.assertEqual((rec["client"], rec["status"], rec["mode"], rec["alerts"]), ("acme", 200, "live", 1))
+        for forbidden in (tok, "SECRET-PROCESS-NAME", "127.0.0.1"):
+            self.assertNotIn(forbidden, line)
+
+    def test_per_client_rate_limit_protects_against_leaked_token(self):
+        tok = "z" * 40
+        os.environ["AEROS_API_TOKENS"] = f"acme:{tok}"
+        codes = [self.post({"dry_run": False, "events": [self.E(1)]}, {"authorization": f"Bearer {tok}"})[0] for _ in range(63)]
+        self.assertEqual(codes.count(200), 60)
         self.assertIn(429, codes)
 
 

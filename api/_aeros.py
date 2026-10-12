@@ -203,6 +203,33 @@ class Monitor:
         return [a]
 
 
+# ---------- client authentication ----------
+MIN_TOKEN = 32
+
+
+def parse_tokens(multi="", single=""):
+    """AEROS_API_TOKENS='acme:tok1,beta:tok2' (+ legacy AEROS_API_TOKEN as client 'default').
+    Tokens shorter than 32 characters are ignored, so a weak token can never enable live mode."""
+    out = {}
+    for item in (x.strip() for x in multi.split(",")):
+        name, _, tok = item.partition(":")
+        if tok and len(tok) >= MIN_TOKEN and re.fullmatch(r"[A-Za-z0-9_-]{1,32}", name):
+            out[name] = tok
+    if single and len(single) >= MIN_TOKEN:
+        out.setdefault("default", single)
+    return out
+
+
+def authenticate(header, tokens):
+    """Return the client name for a valid 'Bearer <token>' header, else None. Checks every token (no early exit)."""
+    import hmac
+    sent, found = header.removeprefix("Bearer ").strip().encode(), None
+    for name, tok in tokens.items():
+        if hmac.compare_digest(sent, tok.encode()):
+            found = name
+    return found
+
+
 # ---------- alert delivery ----------
 def format_msg(r):
     t = r["triage"]
