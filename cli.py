@@ -1,23 +1,29 @@
-"""Run AEROS locally.  python cli.py --simulate | --watch events.csv"""
+"""Run AEROS locally.  python cli.py --simulate | --watch events.csv
+Env: AEROS_LAG_LIMIT_DAYS (14), AEROS_COOLDOWN_SEC (60), AEROS_MAX_LLM (50 AI calls per run),
+     ANTHROPIC_API_KEY, SLACK_WEBHOOK_URL, SMTP_* / ALERT_TO (see README)."""
 import os, sys, csv, json, time, random, argparse
 from datetime import date, timedelta
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "api"))
-from _aeros import Monitor, validate, deliver, format_msg
+from _aeros import Monitor, validate, deliver_digest, format_msg
 
-mon = Monitor(limit=int(os.getenv("AEROS_LAG_LIMIT_DAYS", "14")))
-COOLDOWN, last = int(os.getenv("AEROS_COOLDOWN_SEC", "0")), {}
+mon = Monitor(limit=int(os.getenv("AEROS_LAG_LIMIT_DAYS", "14")), max_llm=int(os.getenv("AEROS_MAX_LLM", "50")))
+COOLDOWN, last = int(os.getenv("AEROS_COOLDOWN_SEC", "60")), {}
+
+
+def log(path, line):
+    os.makedirs("logs", exist_ok=True)
+    open(os.path.join("logs", path), "a").write(line + "\n")
 
 
 def handle(raw):
-    for r in mon.process(validate(raw), use_llm=True, max_llm=None):
+    for r in mon.process(validate(raw), use_llm=True):
         k = (r["process"], r["rule"])
         if COOLDOWN and time.time() - last.get(k, 0) < COOLDOWN:
             continue
         last[k] = time.time()
-        os.makedirs("logs", exist_ok=True)
-        open("logs/alerts.jsonl", "a").write(json.dumps(r) + "\n")
+        log("alerts.jsonl", json.dumps(r))
         print(format_msg(r) + "\n")
-        deliver(r)
+        deliver_digest([r])
 
 
 def simulate(n=60):
@@ -34,14 +40,22 @@ def simulate(n=60):
 
 
 def watch(path):
-    seen = 0
+    seen_file = os.path.join("logs", "seen_ids.txt")
+    seen = set(open(seen_file).read().split()) if os.path.exists(seen_file) else set()
     print(f"watching {path} (Ctrl+C to stop)")
     while True:
         if os.path.exists(path):
-            rows = list(csv.DictReader(open(path)))
-            for r in rows[seen:]:
-                handle(r)
-            seen = len(rows)
+            for r in csv.DictReader(open(path)):
+                rid = (r.get("id") or "").strip()
+                if not rid or rid in seen:
+                    continue
+                try:
+                    handle(r)
+                except Exception as ex:      # one bad row must never stop the watcher
+                    log("errors.log", f"{rid}: {ex}")
+                    print(f"skipped {rid}: {ex}")
+                seen.add(rid)
+                log("seen_ids.txt", rid)
         time.sleep(2)
 
 

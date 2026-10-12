@@ -13,3 +13,5 @@ sent.txt
 !sample/events.csv
 .vercel/
 logs/
+rejected.log
+rejected_ids.txt
