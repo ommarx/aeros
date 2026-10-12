@@ -11,7 +11,10 @@ Safety defaults:
 import os, sys, json, hmac, time
 from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler
-from _aeros import Monitor, validate, deliver_digest
+
+# Vercel's Python runtime does not put this folder on sys.path, so add it before importing the sibling module.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _aeros import Monitor, validate, deliver_digest  # noqa: E402
 
 LIVE_EVENTS, LIVE_BODY = 200, 100_000
 DRY_EVENTS, DRY_BODY = 50, 20_000

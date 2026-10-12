@@ -224,5 +224,20 @@ class API(unittest.TestCase):
         self.assertIn(429, codes)
 
 
+class VercelStyleImport(unittest.TestCase):
+    def test_function_imports_with_clean_path_from_other_directory(self):
+        """Vercel loads api/ingest.py by file path with the api folder NOT on sys.path."""
+        import subprocess, tempfile
+        path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "api", "ingest.py"))
+        code = ("import importlib.util, sys; "
+                f"spec = importlib.util.spec_from_file_location('vc_entry', {path!r}); "
+                "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); "
+                "assert hasattr(m, 'handler'); print('imported ok')")
+        with tempfile.TemporaryDirectory() as d:
+            r = subprocess.run([sys.executable, "-c", code], cwd=d, capture_output=True, text=True,
+                               env={k: v for k, v in os.environ.items() if k != "PYTHONPATH"})
+        self.assertIn("imported ok", r.stdout, r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

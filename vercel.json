@@ -1,9 +1,6 @@
 {
   "outputDirectory": "public",
   "functions": {
-    "api/*.py": {
-      "maxDuration": 30,
-      "includeFiles": "api/_aeros.py"
-    }
+    "api/ingest.py": { "maxDuration": 30, "includeFiles": "api/_aeros.py" }
   }
 }
